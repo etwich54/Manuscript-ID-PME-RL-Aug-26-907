@@ -1,0 +1,493 @@
+---
+title: "Journavx_EW_10_26"
+output: html_document
+---
+
+# Journavx study
+## Emily Wichmann
+### 2026-10-21
+
+NOTES:
+
+This is the R markdown document for Journavx analysis.The datasets are downloaded as CVS files from SDUD website 10/19/2026.
+
+SDUD: THE SDUD IS SEPERATED BY DIFFERENT STATES, YEAR AND QUARTER. OPEN ANY STATE 2025, AND SET UP THE FILTER AS PRODUCT CONTAINS Journavx. ONLY QUARTER 1 AND 2 ARE AVAILABLE FOR 2025 NOW. THIS WILL GIVE ALL THE DRUG USE INFORMATION FOR ALL THE STATES.
+
+MBES: THE MBES IS SEPARTED BY DIFFERENT QUARTER WITH DIFFERENT YEAR. ONLY 2025 QUARTER 1 AND 2 ARE AVAIBLE NOW.
+
+For SDUD, used filter product name contains JOURNAVX for year 2025 (289 obs). 
+
+Jingye data For MBES, downloaded 2025 first (171 obs) and second quarter (171 obs). No new data was downloaded Oct 2026 as there were no updates to the data since April 2026.
+
+```{r}
+options(warn = -1)
+#options(warn = 0)
+ library(tidyverse)
+```
+```{r}
+ library(gt)
+ library(flextable)
+ library(rmarkdown)
+ library(tinytex)
+ library(ggplot2)
+ library(datasets)
+ library(dplyr)
+#install.packages('officer', 'flextable')
+ library(officer)
+ library(flextable)
+```
+Set the directory for output table.
+```{r}
+setwd("/Users/emilywichmann/Desktop/JHC Lab/Pitt Paper")
+```
+1. Read the dataset
+```{r}
+sdud <- read.csv(file="/Users/emilywichmann/Desktop/JHC Lab/Pitt Paper/sdud2025_updated2025.csv", header=TRUE, sep=",")
+ summary(sdud)
+```
+ 1b.Convert the variable
+```{r}
+ #remove . and replace with _ in variable names
+ names(sdud) <- gsub("\\.", "_", names(sdud))
+ names(sdud)
+```
+ 2. If Suppression_Use is TRUE, then exclude. This will get rid of the missing and keep the information needed for analysis
+```{r}
+ sdud$Suppression_Used <- as.logical(sdud$Suppression_Used)
+ class(sdud$Suppression_Used)
+freq_table_suppression <- table(sdud$Suppression_Used)
+ print(freq_table_suppression)
+```
+ ## FALSE TRUE 
+  ## 146 143 
+```{r}
+sdud_filtered <- sdud[sdud$Suppression_Used != "TRUE" & !is.na(sdud$Suppression_Used), ]
+ summary(sdud_filtered)
+```
+ 3. Exclude the state XX because the records are the sum for all states
+```{r}
+summary(sdud$Suppression_Used)
+sdud_filtered2 <- sdud_filtered[sdud_filtered$State != "XX" & !is.na(sdud_filtered$State), ]
+ 
+ State_freq2 <- table(sdud_filtered2$State)
+ print(State_freq2)
+```
+## AR AZ CA CO CT DE FL GA HI IA ID IL IN KY LA MA MD MI MN NC NE NH NJ NV NY OH OK OR PA SC SD 
+## 5  3  5  3  3  2  3  6  2  3  1  3  5  4  4  6  3  3  3  5  3  2  3  3  6  3  5  3  3  3  3  
+## TN TX UT VA WA WI WV  
+## 3  3  6  3  3  3  3 
+
+ 4. Sum the amount of reimbursed, number of prescriptions, reimbursed units for different quarters. Use variable Medicaid_Amount_Reimbursed instead of Total_Amount_Reimbursed.
+```{r}
+quarterly_summary <- sdud_filtered2 %>%
+ group_by(Utilization_Type, Quarter) %>%
+ summarise(
+ Total_Reimbursed = round(sum(`Medicaid_Amount_Reimbursed`, na.rm = TRUE), 2),
+ Total_Prescriptions = round(sum(`Number_of_Prescriptions`, na.rm = TRUE), 2),
+ Total_Units = sum(`Units_Reimbursed`, na.rm = TRUE),
+ groups = "drop" 
+ ) %>%
+ # Calculate the "Total" row for each quarter
+ group_by(Quarter) %>%
+ group_modify(~ {
+ total_row <- tibble(
+ Utilization = "Total",
+ Total_Reimbursed = sum(.x$Total_Reimbursed),
+ Total_Prescriptions = sum(.x$Total_Prescriptions),
+ Total_Units = sum(.x$Total_Units)
+ )
+ bind_rows(total_row, .x)
+ }) %>%
+ # Calculate Percentage Share
+ mutate(
+ Share_Total = (Total_Reimbursed / first(Total_Reimbursed)) * 100
+ ) %>%
+ select(Quarter, Utilization_Type, Utilization, Total_Reimbursed, Share_Total, Total_Prescriptions, Total_Units)
+```
+ 5. Output the Table
+```{r}
+#ungroup()
+write.csv(quarterly_summary, "Quarterly_Medicaid_Summary12.csv", row.names = FALSE)
+```
+ 6. Create the Styled Table
+```{r}
+final_table <- quarterly_summary %>%
+ gt(rowname_col = "Utilization", groupname_col = "Quarter") %>%
+ tab_header(
+ title = "Table 1. National Medicaid utilization and reimbursement for suzetrigine (Journavx®)",
+ subtitle = "during first year after FDA approval (2025)"
+ ) %>%
+ cols_label(
+ Total_Reimbursed = "Total Reimbursed ($)a",
+ Share_Total = "Share of Total Reimbursed (%)",
+ Total_Prescriptions = "Number of Prescriptions",
+ Total_Units = "Number of Units (tablets)"
+ ) %>%
+ # Formatting values
+ fmt_currency(columns = Total_Reimbursed, currency = "USD") %>%
+ fmt_number(columns = Share_Total, decimals = 2) %>%
+ #fmt_number(columns = c(Num_Prescriptions, Num_Units), decimals = 0, use_seps = TRUE) %>%
+ # Visual Styling
+ tab_options(
+ row_group.font.weight = "bold",
+ table.width = pct(100)
+ )
+ # Display the table
+ final_table
+```
+ 7. Find the total reimbursed, total units and total prescription for different utilization type for FFSU and MCOU regardless of state and quarters. Use Medicaid_Amount_Reimbursed variable rather than Total_Amount_Reimbursed. 
+```{r}
+quarterly_summary_allQ <- sdud_filtered2 %>%
+ group_by(Utilization_Type) %>%
+ summarise(
+ Total_Reimbursed = round(sum(`Medicaid_Amount_Reimbursed`, na.rm = TRUE), 2),
+ Total_Prescriptions = round(sum(`Number_of_Prescriptions`, na.rm = TRUE), 2),
+ Total_Units = sum(`Units_Reimbursed`, na.rm = TRUE),
+ groups = "drop" 
+ ) %>%
+ #group_by(Quarter) %>%
+ group_modify(~ {
+ total_row <- tibble(
+ Utilization = "Total",
+ Total_Reimbursed = sum(.x$Total_Reimbursed),
+ Total_Prescriptions = sum(.x$Total_Prescriptions),
+ Total_Units = sum(.x$Total_Units)
+ )
+ bind_rows(total_row, .x)
+ }) %>%
+ mutate(
+ Share_Total = (Total_Reimbursed / first(Total_Reimbursed)) * 100
+ ) %>%
+ select(Utilization_Type, Utilization, Total_Reimbursed, Share_Total, Total_Prescriptions, Total_Units) %>%
+ ungroup()
+ print(quarterly_summary_allQ)
+```
+ 8. Output table
+```{r}
+write.csv(quarterly_summary_allQ, "quarterly_summary_allQ3.csv", row.names = FALSE)
+```
+ 9. Create the styled table
+```{r}
+allQ_final_table <- quarterly_summary_allQ %>%
+ gt(rowname_col = "Utilization", groupname_col = "Quarter") %>%
+ tab_header(
+ title = "Table 1. National Medicaid utilization and reimbursement for suzetrigine (Journavx®)",
+ subtitle = "during first year after FDA approval (2025) for FFSU and MCOU regardless the state and quarter"
+ ) %>%
+ cols_label(
+ Total_Reimbursed = "Total Reimbursed ($)a",
+ Share_Total = "Share of Total Reimbursed (%)",
+ Total_Prescriptions = "Number of Prescriptions",
+ Total_Units = "Number of Units (tablets)"
+ ) %>%
+ # Formatting values
+ fmt_currency(columns = Total_Reimbursed, currency = "USD") %>%
+ fmt_number(columns = Share_Total, decimals = 2) %>%
+ #fmt_number(columns = c(Num_Prescriptions, Num_Units), decimals = 0, use_seps = TRUE) %>%
+ # Visual Styling
+ tab_options(
+ row_group.font.weight = "bold",
+ table.width = pct(100)
+ )
+ 
+ # Display the table
+```
+ 10. Find the total of reimbursement, total prescription and total units based on State=XX for different quarters. Use Medicaid_Amount_Reimbursed instead of Total_Amount_Reimbursed. State=XX means nationwide.
+```{r}
+ allQ_final_table
+xx <- sdud_filtered%>%
+ filter(State == "XX")
+ #View(xx)
+ 
+ xx_summary <- xx %>%
+ group_by(Utilization_Type, Quarter) %>%
+ summarise(
+ Total_Reimbursed = round(sum(`Medicaid_Amount_Reimbursed`, na.rm = TRUE), 2),
+ Total_Prescriptions = round(sum(`Number_of_Prescriptions`, na.rm = TRUE), 2),
+ Total_Units = sum(`Units_Reimbursed`, na.rm = TRUE),
+ groups = "drop" 
+ ) %>%
+ group_by(Quarter) %>%
+ group_modify(~ {
+ total_row <- tibble(
+ Utilization = "Total",
+ Total_Reimbursed = sum(.x$Total_Reimbursed),
+ Total_Prescriptions = sum(.x$Total_Prescriptions),
+ Total_Units = sum(.x$Total_Units)
+ )
+ bind_rows(total_row, .x)
+ }) %>%
+ mutate(
+ Share_Total = (Total_Reimbursed / first(Total_Reimbursed)) * 100
+ ) %>%
+ select(Quarter, Utilization_Type, Utilization, Total_Reimbursed, Share_Total, Total_Prescriptions, Total_Units) %>%
+ ungroup()
+```
+ 11. Output Table
+```{r}
+write.csv(xx_summary, "xx_summary3.csv", row.names = FALSE)
+```
+ 12. Create a Styled Table
+```{r}
+xx_final_table <- xx_summary %>%
+ gt(rowname_col = "Utilization", groupname_col = "Quarter") %>%
+ tab_header(
+ title = "National Medicaid utilization and reimbursement for suzetrigine (Journavx®) for State is XX",
+ subtitle = "during first year after FDA approval (2025) for total of FFCU and MCOU regardless of Suppression and states"
+ ) %>%
+ cols_label(
+ Total_Reimbursed = "Total Reimbursed ($)a",
+ Share_Total = "Share of Total Reimbursed (%)",
+ Total_Prescriptions = "Number of Prescriptions",
+ Total_Units = "Number of Units (tablets)"
+ ) %>%
+ # Formatting values
+ fmt_currency(columns = Total_Reimbursed, currency = "USD") %>%
+ fmt_number(columns = Share_Total, decimals = 2) %>%
+ #fmt_number(columns = c(Num_Prescriptions, Num_Units), decimals = 0, use_seps = TRUE) %>%
+ # Visual Styling
+ tab_options(
+ row_group.font.weight = "bold",
+ table.width = pct(100)
+ )
+ 
+ # Display the table
+ xx_final_table
+```
+ 13.For table 1, find the total reimbursed, total units and total prescription for different utilization type for FFSU and MCOU regardless of state and quarters for state=XX. Use Medicaid_Amount_Reimbursed instead of Total_Amount_Reimbursed.
+
+```{r}
+xx_allQ <- xx %>%
+ group_by(Utilization_Type) %>%
+ summarise(
+ Total_Reimbursed = round(sum(`Medicaid_Amount_Reimbursed`, na.rm = TRUE), 2),
+ Total_Prescriptions = round(sum(`Number_of_Prescriptions`, na.rm = TRUE), 2),
+ Total_Units = sum(`Units_Reimbursed`, na.rm = TRUE),
+ groups = "drop" 
+ ) %>%
+ #group_by(Quarter) %>%
+ group_modify(~ {
+ total_row <- tibble(
+ Utilization = "Total",
+ Total_Reimbursed = sum(.x$Total_Reimbursed),
+ Total_Prescriptions = sum(.x$Total_Prescriptions),
+ Total_Units = sum(.x$Total_Units)
+ )
+ bind_rows(total_row, .x)
+ }) %>%
+ mutate(
+ Share_Total = (Total_Reimbursed / first(Total_Reimbursed)) * 100
+ ) %>%
+ select(Utilization_Type, Utilization, Total_Reimbursed, Share_Total, Total_Prescriptions, Total_Units) %>%
+ ungroup()
+ print(xx_allQ)
+```
+ 14. Output the table
+```{r}
+write.csv(xx_allQ, "xx_allQ", row.names = FALSE)
+xx_allQ_final_table <- xx_allQ %>%
+ gt(rowname_col = "Utilization", groupname_col = "Quarter") %>%
+ tab_header(
+ title = "Table 1. National Medicaid utilization and reimbursement for suzetrigine (Journavx®) for state='XX'",
+ subtitle = "during first year after FDA approval (2025) for FFSU and MCOU regardless the state and quarter"
+ ) %>%
+ cols_label(
+ Total_Reimbursed = "Total Reimbursed ($)a",
+ Share_Total = "Share of Total Reimbursed (%)",
+ Total_Prescriptions = "Number of Prescriptions",
+ Total_Units = "Number of Units (tablets)"
+ ) %>%
+ # Formatting values
+ fmt_currency(columns = Total_Reimbursed, currency = "USD") %>%
+ fmt_number(columns = Share_Total, decimals = 2) %>%
+ #fmt_number(columns = c(Num_Prescriptions, Num_Units), decimals = 0, use_seps = TRUE) %>%
+ # Visual Styling
+ tab_options(
+ row_group.font.weight = "bold",
+ table.width = pct(100)
+ )
+ 
+ # Display the table
+ xx_allQ_final_table
+```
+15. Sum the number of prescription and reimbursement for different states for table. Use Medicaid_Amount_Reimbursed instead of Total_Amount_Reimbursed.
+```{r}
+sum_prescrip_state <- sdud_filtered2 %>%
+ group_by(`State`) %>%
+ summarize(Total_Prescriptions = sum(Number_of_Prescriptions, na.rm = TRUE),
+ #arrange(desc(Total_Prescriptions)) %>%
+ Total_Reimbursed = sum(Medicaid_Amount_Reimbursed, na.rm = TRUE)) 
+ 
+ #RENAME THE STATE ABBREVIATION TO FULL NAME
+ sum_prescrip_state$State <- case_when(
+ sum_prescrip_state$State == "NY" ~ "New York",
+ sum_prescrip_state$State == "NC" ~ "North Carolina",
+ sum_prescrip_state$State == "TN" ~ "Tennessee",
+ sum_prescrip_state$State == "KY" ~ "Kentucky",
+ sum_prescrip_state$State == "IN" ~ "Indiana",
+ sum_prescrip_state$State == "IA" ~ "Iowa",
+ sum_prescrip_state$State == "TX" ~ "Texas",
+ sum_prescrip_state$State == "CO" ~ "Colorado",
+ sum_prescrip_state$State == "CT" ~ "Connecticut",
+ sum_prescrip_state$State == "GA" ~ "Georgia",
+ sum_prescrip_state$State == "AR" ~ "Arkansas",
+ sum_prescrip_state$State == "LA" ~ "Louisiana",
+ sum_prescrip_state$State == "VA" ~ "Virginia",
+ sum_prescrip_state$State == "PA" ~ "Pennsylvania",
+ sum_prescrip_state$State == "MA" ~ "Massachusetts",
+ sum_prescrip_state$State == "WA" ~ "Washington",
+ sum_prescrip_state$State == "SD" ~ "South Dakota",
+ sum_prescrip_state$State == "WV" ~ "West Virginia",
+ sum_prescrip_state$State == "MN" ~ "Minnesota",
+ sum_prescrip_state$State == "OH" ~ "Ohio",
+ sum_prescrip_state$State == "MI" ~ "Michigan",
+ sum_prescrip_state$State == "AZ" ~ "Arizona",
+ sum_prescrip_state$State == "NE" ~ "Nebraska",
+ sum_prescrip_state$State == "SC" ~ "South Carolina",
+ sum_prescrip_state$State == "NJ" ~ "New Jersey",
+ sum_prescrip_state$State == "IL" ~ "Illinois",
+ sum_prescrip_state$State == "UT" ~ "Utah",
+ sum_prescrip_state$State == "CA" ~ "California",
+ sum_prescrip_state$State == "FL" ~ "Florida",
+ sum_prescrip_state$State == "OK" ~ "Oklahoma",
+ sum_prescrip_state$State == "WI" ~ "Wisconsin",
+ sum_prescrip_state$State == "MD" ~ "Maryland",
+ sum_prescrip_state$State == "OR" ~ "Oregon",
+ sum_prescrip_state$State == "DE" ~ "Delaware",
+ sum_prescrip_state$State == "HI" ~ "Hawaii",
+ sum_prescrip_state$State == "NH" ~ "New Hampshire",
+ sum_prescrip_state$State == "NV" ~ "Nevada",
+ # Keep the original value for any other state
+ TRUE ~ sum_prescrip_state$State
+ )
+```
+
+ 16. Find the number of enrollment for different state for year 2025.Q3 and Q4 data not updated to the website as of October update
+
+### Data Retrieved and analyzed by author Jingye
+ 17. Read in data
+```{r, eval=FALSE}
+MBES_q1 <- read.csv(file="C:\\Users\\JIY116\\OneDrive - University of Pittsburgh\\Desktop\\Journavx\\MBES_q1.csv", header=TRUE, sep=",")
+
+MBES_q2 <- read.csv(file="C:\\Users\\JIY116\\OneDrive - University of Pittsburgh\\Desktop\\Journavx\\MBES_q2.csv", header=TRUE, sep=",")
+```
+ 18. Combine the two quarters together
+```{r, eval=FALSE}
+#For 2025-Q3, assign the Total_enroll as the Total_enroll 2025-Q2
+#For Q3,change the value for the Enroll_Month, change 6 to 7, 7 to 8 and 8 to 9
+MBES_q3 <- MBES_q2 %>%
+  mutate(Enrollment_Month = ifelse(Enrollment_Month %in% 4:6, 
+                                   Enrollment_Month + 3, 
+                                   Enrollment_Month))
+
+
+#for Q4, also used the enrollment from Q2, change change 7 to 10, 8 to 11 and 9 to 12
+MBES_q4 <- MBES_q3 %>%
+  mutate(Enrollment_Month = ifelse(Enrollment_Month %in% 7:9, 
+                                   Enrollment_Month + 3, 
+                                   Enrollment_Month))
+
+combined_data <- rbind(MBES_q1, MBES_q2, MBES_q3, MBES_q4)
+summary(combined_data)
+```
+ 19. Sum the total number of enrollees by state.
+```{r, eval=FALSE}
+summary_data <- combined_data %>%
+  group_by(State) %>%             # Replace with your grouping variable
+  summarise(total_enroll = sum(Total_Medicaid_Enrollees, na.rm = TRUE))
+
+
+summary_data$State <- case_when(
+  summary_data$State == "New York " ~ "New York",
+  summary_data$State == "North Carolina " ~ "North Carolina",
+  summary_data$State == "Tennessee " ~ "Tennessee",
+  summary_data$State == "Kentucky " ~ "Kentucky",
+  summary_data$State == "Indiana " ~ "Indiana",
+  summary_data$State == "Iowa " ~ "Iowa",
+  summary_data$State == "Texas " ~ "Texas",
+  summary_data$State == "Colorado " ~ "Colorado",
+  summary_data$State == "Connecticut " ~ "Connecticut",
+  summary_data$State == "Georgia " ~ "Georgia",
+  summary_data$State == "Arkansas " ~ "Arkansas",
+  summary_data$State == "Louisiana " ~ "Louisiana",
+  summary_data$State == "Virginia " ~ "Virginia",
+  summary_data$State == "Pennsylvania " ~ "Pennsylvania",
+  summary_data$State == "Massachusetts " ~ "Massachusetts",
+  summary_data$State == "Washington " ~ "Washington",
+  summary_data$State == "South Dakota " ~ "South Dakota",
+  summary_data$State == "West Virginia " ~ "West Virginia",
+  summary_data$State == "Minnesota " ~ "Minnesota",
+  summary_data$State == "Ohio " ~ "Ohio",
+  summary_data$State == "Michigan " ~ "Michigan",
+  summary_data$State == "Arizona " ~ "Arizona",
+  summary_data$State == "Nebraska " ~ "Nebraska",
+  summary_data$State == "South Carolina " ~ "South Carolina",
+  summary_data$State == "New Jersey " ~ "New Jersey",
+  summary_data$State == "Illinois " ~ "Illinois",
+  summary_data$State == "Utah " ~ "Utah",
+  summary_data$State == "California " ~ "California",
+  summary_data$State == "Florida " ~ "Florida",
+  summary_data$State == "Oklahoma " ~ "Oklahoma",
+  summary_data$State == "Wisconsin " ~ "Wisconsin",
+  summary_data$State == "Maryland " ~ "Maryland",
+  summary_data$State == "Oregon " ~ "Oregon",
+  summary_data$State == "Delaware " ~ "Delaware",
+  summary_data$State == "Hawaii " ~ "Hawaii",
+  summary_data$State == "Idaho " ~ "Idaho",
+  summary_data$State == "New Hampshire " ~ "New Hampshire",
+  summary_data$State == "Nevada " ~ "Nevada",
+  summary_data$State == "Nevada " ~ "Nevada",
+
+
+  
+  # Keep the original value for any other state
+  TRUE ~ summary_data$State
+)
+
+write.csv(summary_data, "summary_data_enroll4.csv", row.names = FALSE)
+
+print(summary_data, n= Inf)
+```
+ 20. Average the number of enrollment for every month. Average 12 months for 4 quarters.
+```{r, eval=FALSE}
+total_enroll_average <- summary_data %>%
+        mutate(average_enroll = total_enroll/12)
+View(total_enroll_average)
+```
+ 21. Merge the number of prescription and the number of enrollment using the state name.
+```{r, eval=FALSE}
+combined_data2 <- left_join(sum_prescrip_state, total_enroll_average, by = 'State')
+
+write.csv(combined_data2, "combined_data6.csv", row.names = FALSE)
+
+print(combined_data2, n= Inf)
+```
+ 22. Calculate the number of prescriptions per 100k enrollees.
+```{r, eval=FALSE}
+combined_data_pernt <- combined_data2 %>%
+  mutate(prescription_rate = (combined_data2$Total_Prescriptions / combined_data2$average_enroll) * 100000)
+
+print(combined_data_pernt, n= Inf)
+```
+ 23. Find the top 20 prescription rate states.
+```{r, eval=FALSE}
+prescription_rate_top20 <- combined_data_pernt %>%
+  slice_max(order_by = prescription_rate, n=20)
+
+prescription_rate_top20_fianl <- prescription_rate_top20 %>%
+  select (- total_enroll)
+
+prescription_rate_top20_fianl2 <- prescription_rate_top20_fianl[, c("State", "Total_Prescriptions", "average_enroll", "prescription_rate", "Total_Reimbursed")] %>%
+    rename(
+       "State" = State,
+       "Number of Prescriptions" = Total_Prescriptions ,
+       "Average number of enrollment" =  average_enroll ,
+       "Number of Prescriptions per 100k enrollees" = prescription_rate,
+       "Total amount of Reimbursement" = Total_Reimbursed)
+
+print(prescription_rate_top20_fianl2)
+```
+ 24. Output Table
+```{r, eval=FALSE}
+write.csv(prescription_rate_top20_fianl2, "prescription_rate_top20_fianl_2_0430.csv", row.names = FALSE)
+```
